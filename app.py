@@ -1,69 +1,77 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
+import plotly.express as px
+from pathlib import Path
 
-# Page settings
-st.set_page_config(page_title="Housing Affordability Dashboard", page_icon="🏡", layout="wide")
+# Streamlit page config
+st.set_page_config(page_title="Rent vs Buy Analysis", layout="wide")
+st.title("🏠 Housing Affordability: Rent vs Buy Dashboard (Kuala Lumpur)")
 
-st.title("🏡 Housing Affordability: Rent vs Buy Analysis")
-st.markdown("### Compare the long-term cost of renting vs buying based on your assumptions.")
+# File path (same folder as app.py)
+DATA_FILE = Path(__file__).parent / "Buy_vs_Rent_KL_FullModel.xlsx"
 
-# Sidebar for inputs
-st.sidebar.header("Adjust Your Assumptions")
+# Load data
+@st.cache_data
+def load_data(file_path):
+    return pd.read_excel(file_path)
 
-house_price = st.sidebar.number_input("House Price (USD)", 50000, 2000000, 300000)
-down_payment_pct = st.sidebar.slider("Down Payment (%)", 0, 100, 20)
-mortgage_rate = st.sidebar.number_input("Mortgage Interest Rate (%)", 0.0, 15.0, 4.0)
-loan_term = st.sidebar.slider("Loan Term (Years)", 5, 40, 30)
+if DATA_FILE.exists():
+    df = load_data(DATA_FILE)
+else:
+    st.error(f"❌ Data file not found: {DATA_FILE}")
+    st.stop()
 
-annual_rent = st.sidebar.number_input("Annual Rent (USD)", 1000, 100000, 15000)
-rent_increase = st.sidebar.slider("Annual Rent Increase (%)", 0.0, 10.0, 3.0)
+# Sidebar filters
+st.sidebar.header("🔍 Filters")
+years = sorted(df['Year'].unique())
+selected_years = st.sidebar.slider(
+    "Select Year Range",
+    int(min(years)), int(max(years)),
+    (int(min(years)), int(max(years)))
+)
+scenarios = df['Scenario'].unique() if 'Scenario' in df.columns else []
+selected_scenarios = st.sidebar.multiselect(
+    "Select Scenario(s)",
+    scenarios,
+    default=scenarios
+)
 
-years = st.sidebar.slider("Projection Years", 1, 40, 10)
+# Filter data
+df_filtered = df[
+    (df['Year'] >= selected_years[0]) &
+    (df['Year'] <= selected_years[1])
+]
+if 'Scenario' in df.columns:
+    df_filtered = df_filtered[df_filtered['Scenario'].isin(selected_scenarios)]
 
-# Calculations
-down_payment = house_price * (down_payment_pct / 100)
-loan_amount = house_price - down_payment
-annual_mortgage_payment = (loan_amount * (mortgage_rate / 100)) / (1 - (1 + mortgage_rate / 100) ** (-loan_term))
-
-data = []
-for year in range(1, years + 1):
-    rent_cost = annual_rent * ((1 + rent_increase / 100) ** (year - 1))
-    if year <= loan_term:
-        buy_cost = annual_mortgage_payment
-    else:
-        buy_cost = 0
-    data.append({"Year": year, "Rent Cost": rent_cost, "Buy Cost": buy_cost})
-
-df = pd.DataFrame(data)
-
-# Cumulative costs
-df["Cumulative Rent"] = df["Rent Cost"].cumsum()
-df["Cumulative Buy"] = df["Buy Cost"].cumsum()
-
-# Layout: split into two columns
+# KPIs
 col1, col2 = st.columns(2)
+avg_rent = df_filtered['Rent Cost'].mean()
+avg_buy = df_filtered['Buy Cost'].mean()
+col1.metric("💰 Avg Rent Cost", f"RM {avg_rent:,.0f}")
+col2.metric("🏡 Avg Buy Cost", f"RM {avg_buy:,.0f}")
 
-with col1:
-    st.subheader("📊 Annual Cost Comparison")
-    fig, ax = plt.subplots()
-    ax.plot(df["Year"], df["Rent Cost"], label="Rent", marker='o', color="orange")
-    ax.plot(df["Year"], df["Buy Cost"], label="Buy", marker='o', color="green")
-    ax.set_xlabel("Year")
-    ax.set_ylabel("Annual Cost (USD)")
-    ax.legend()
-    st.pyplot(fig)
+# Interactive chart
+fig = px.line(
+    df_filtered,
+    x="Year",
+    y=["Rent Cost", "Buy Cost"],
+    color_discrete_map={"Rent Cost": "#FF5733", "Buy Cost": "#33C1FF"},
+    markers=True,
+    title="Rent vs Buy Over Time"
+)
+fig.update_layout(legend_title_text='Cost Type', template="plotly_white")
+st.plotly_chart(fig, use_container_width=True)
 
-with col2:
-    st.subheader("💰 Cumulative Cost Over Time")
-    fig2, ax2 = plt.subplots()
-    ax2.plot(df["Year"], df["Cumulative Rent"], label="Cumulative Rent", marker='o', color="red")
-    ax2.plot(df["Year"], df["Cumulative Buy"], label="Cumulative Buy", marker='o', color="blue")
-    ax2.set_xlabel("Year")
-    ax2.set_ylabel("Total Cost (USD)")
-    ax2.legend()
-    st.pyplot(fig2)
+# Data table
+st.subheader("📊 Detailed Data")
+st.dataframe(df_filtered)
 
-# Table
-st.subheader("📄 Detailed Projection Table")
-st.dataframe(df.style.format("{:,.0f}"))
+# Download button
+csv = df_filtered.to_csv(index=False).encode('utf-8')
+st.download_button(
+    "⬇️ Download Filtered Data",
+    csv,
+    "rent_vs_buy_filtered.csv",
+    "text/csv"
+)
